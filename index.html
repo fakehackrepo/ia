@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Detector Live — Guardado local, rostros, historial</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0b0f12; --card:#0f1720; --accent:#00d3a3; --muted:#9aa6b2;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:Inter, Roboto, Arial, sans-serif;
+      background:linear-gradient(180deg,#071017 0%, #071a1a 100%); color:#e6eef0;
+      padding:12px;
+    }
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    h1{font-size:18px;margin:0;color:var(--accent)}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{
+      background:var(--accent); color:#021014; border:none; padding:8px 10px;border-radius:8px;
+      cursor:pointer; font-weight:600;
+    }
+    button.ghost{background:transparent;color:var(--accent);border:1px solid rgba(0,211,163,0.12)}
+    #layout{display:grid;grid-template-columns:1fr 360px;gap:12px;margin-top:12px}
+    @media(max-width:900px){#layout{grid-template-columns:1fr;}}
+    /* video card */
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px; padding:10px}
+    #previewWrap{position:relative;border-radius:10px;overflow:hidden;background:#000;height:60vh;max-height:720px;}
+    #videoEl{width:100%;height:100%;object-fit:cover;display:block}
+    canvas#overlay{position:absolute;inset:0;pointer-events:none}
+    .tinyInfo{font-size:13px;color:var(--muted);margin-top:8px}
+    /* side panel */
+    .panel{display:flex;flex-direction:column;gap:12px;padding:10px}
+    .panel .box{background:var(--card);padding:10px;border-radius:10px}
+    label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+    #historyList{max-height:60vh;overflow:auto;padding:6px;display:flex;flex-direction:column;gap:8px}
+    .histItem{display:flex;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:8px;border-radius:8px}
+    .histItem img{width:64px;height:48px;object-fit:cover;border-radius:6px}
+    .meta{flex:1;font-size:13px}
+    .meta b{display:block;color:var(--accent)}
+    .row{display:flex;gap:8px;align-items:center}
+    .zoneBtn{background:transparent;border:1px dashed rgba(255,255,255,0.05);padding:8px;border-radius:6px;color:var(--muted)}
+    .small{font-size:12px;padding:6px 8px}
+    input[type="checkbox"]{transform:scale(1.1);margin-right:6px}
+    /* enroll */
+    #enrollList{display:flex;gap:8px;flex-wrap:wrap}
+    .personCard{background:rgba(0,0,0,0.25);padding:6px;border-radius:8px;display:flex;gap:8px;align-items:center}
+    .personCard img{width:48px;height:48px;object-fit:cover;border-radius:6px}
+    footer{margin-top:12px;color:var(--muted);font-size:13px;text-align:center}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Detector Live — Guardar local • Rostros • Historial</h1>
+    <div class="controls">
+      <button id="btnSwitchCam">Cambiar cámara</button>
+      <button id="btnToggleAlerts" class="ghost">Alertas: ON</button>
+      <button id="btnClearAll" class="ghost">Borrar historial</button>
+    </div>
+  </header>
+
+  <div id="layout">
+    <!-- video + overlay -->
+    <div class="card">
+      <div id="previewWrap">
+        <video id="videoEl" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:10px">
+        <div class="tinyInfo">FPS: <span id="fps">--</span> • Procesando cada <span id="intervalMs">250</span> ms</div>
+        <div style="display:flex;gap:8px">
+          <button id="btnSnapshot" class="small">Tomar foto</button>
+          <button id="btnClearZone" class="small zoneBtn">Borrar zona</button>
+          <button id="btnDrawZone" class="small zoneBtn">Dibujar zona</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <div style="background:rgba(0,0,0,0.25);padding:6px;border-radius:8px">
+          <label style="margin:0;font-size:12px;color:var(--muted)">Guardar auto (local)</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="cbSaveOnDetect" type="checkbox" checked/>
+            <label for="cbSaveOnDetect" class="tinyInfo" style="margin:0">Guardar imagen al detectar</label>
+          </div>
+        </div>
+
+        <div style="background:rgba(0,0,0,0.25);padding:6px;border-radius:8px">
+          <label style="margin:0;font-size:12px;color:var(--muted)">Solo alertar si persona</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="cbOnlyPersonAlert" type="checkbox" checked/>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:8px;font-size:13px;color:var(--muted)">
+        <b>Consejo:</b> Si tu equipo va lento, sube el intervalo de procesamiento (ver panel).
+      </div>
+    </div>
+
+    <!-- side panel -->
+    <div class="panel">
+      <div class="box">
+        <label>Configuración de detección</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label>Intervalo (ms)</label>
+          <input id="inputInterval" type="number" min="80" value="250" style="width:100px;padding:6px;border-radius:6px;background:#071017;color:#fff;border:1px solid rgba(255,255,255,0.03)"/>
+        </div>
+        <div style="height:8px"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label>Umbral rostro (0.0-1.0)</label>
+          <input id="inputFaceThresh" type="number" min="0.3" max="0.8" step="0.01" value="0.55" style="width:100px;padding:6px;border-radius:6px;background:#071017;color:#fff;border:1px solid rgba(255,255,255,0.03)"/>
+        </div>
+        <div style="height:8px"></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <label>Mostrar cajas</label>
+          <input id="cbShowBoxes" type="checkbox" checked/>
+        </div>
+      </div>
+
+      <div class="box">
+        <label>Enrolar persona (reconocimiento)</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="inputPersonName" placeholder="Nombre (ej. 'Juan')" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:#071017;color:#fff"/>
+          <button id="btnEnroll" class="small">Enrolar</button>
+        </div>
+        <div id="enrollList" style="margin-top:8px"></div>
+      </div>
+
+      <div class="box">
+        <label>Historial (local)</label>
+        <div id="historyList"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Este sistema guarda todo en tu navegador (IndexedDB). No necesita servidor.</footer>
+
+  <!-- libs -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+
+  <!-- face-api.js (detection + recognition) -->
+  <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+  <script>
+/* ---------------------------
+   UTIL: IndexedDB simple wrapper
+   --------------------------- */
+const DB_NAME = 'detectorLocalDB_v1';
+const DB_STORE = 'detecciones';
+let dbPromise = null;
+function openDB(){
+  if(dbPromise) return dbPromise;
+  dbPromise = new Promise((res,rej)=>{
+    const rq = indexedDB.open(DB_NAME,1);
+    rq.onupgradeneeded = e=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(DB_STORE)){
+        const os = db.createObjectStore(DB_STORE,{keyPath:'id',autoIncrement:true});
+        os.createIndex('by_time','time',{unique:false});
+      }
+    };
+    rq.onsuccess = ()=>res(rq.result);
+    rq.onerror = ()=>rej(rq.error);
+  });
+  return dbPromise;
+}
+async function saveRecord(record){
+  const db = await openDB();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(DB_STORE,'readwrite');
+    tx.objectStore(DB_STORE).add(record);
+    tx.oncomplete = ()=>res();
+    tx.onerror = ()=>rej(tx.error);
+  });
+}
+async function getAllRecords(){
+  const db = await openDB();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(DB_STORE,'readonly');
+    const req = tx.objectStore(DB_STORE).getAll();
+    req.onsuccess = ()=>res(req.result);
+    req.onerror = ()=>rej(req.error);
+  });
+}
+async function clearAllRecords(){
+  const db = await openDB();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(DB_STORE,'readwrite');
+    tx.objectStore(DB_STORE).clear();
+    tx.oncomplete = ()=>res();
+    tx.onerror = ()=>rej(tx.error);
+  });
+}
+
+/* ---------------------------
+   UI elements
+   --------------------------- */
+const videoEl = document.getElementById('videoEl');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const btnSwitch = document.getElementById('btnSwitchCam');
+const btnSnapshot = document.getElementById('btnSnapshot');
+const btnEnroll = document.getElementById('btnEnroll');
+const inputName = document.getElementById('inputPersonName');
+const enrollList = document.getElementById('enrollList');
+const historyList = document.getElementById('historyList');
+const btnToggleAlerts = document.getElementById('btnToggleAlerts');
+const btnClearAll = document.getElementById('btnClearAll');
+const cbSaveOnDetect = document.getElementById('cbSaveOnDetect');
+const cbOnlyPersonAlert = document.getElementById('cbOnlyPersonAlert');
+const cbShowBoxes = document.getElementById('cbShowBoxes');
+const inputInterval = document.getElementById('inputInterval');
+const intervalMsSpan = document.getElementById('intervalMs');
+const fpsSpan = document.getElementById('fps');
+const inputFaceThresh = document.getElementById('inputFaceThresh');
+const btnDrawZone = document.getElementById('btnDrawZone');
+const btnClearZone = document.getElementById('btnClearZone');
+
+/* ---------------------------
+   STATE
+   --------------------------- */
+let usingFront = false;
+let stream = null;
+let model = null;
+let processing = false;
+let lastTime = performance.now();
+let fpsCounter = {count:0,last:performance.now()};
+let intervalMs = parseInt(inputInterval.value || '250');
+let faceThreshold = parseFloat(inputFaceThresh.value || '0.55');
+let alertOn = true;
+let zoneRect = null; // {x,y,w,h} in canvas coords
+let drawingZone = false;
+let enrollDescriptors = []; // [{name,descriptor,thumbnailBlob}]
+const audioBeep = new Audio();
+audioBeep.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA="; // tiny silent placeholder
+
+/* ---------------------------
+   Load models
+   --------------------------- */
+async function loadModels(){
+  // coco-ssd
+  model = await cocoSsd.load();
+  console.log('COCO-SSD listo');
+  // face-api models
+  await faceapi.nets.tinyFaceDetector.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights/');
+  await faceapi.nets.faceRecognitionNet.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights/');
+  await faceapi.nets.faceLandmark68Net.loadFromUri('https://unpkg.com/face-api.js@0.22.2/weights/');
+  console.log('face-api listo');
+}
+
+/* ---------------------------
+   Camera control
+   --------------------------- */
+async function startCamera(){
+  if(stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream = null;
+  }
+  try{
+    const constraints = {
+      audio:false,
+      video:{ facingMode: usingFront ? 'user' : 'environment', width:{ideal:1280}, height:{ideal:720} }
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    videoEl.srcObject = stream;
+    await videoEl.play();
+    overlay.width = videoEl.videoWidth || 640;
+    overlay.height = videoEl.videoHeight || 480;
+  }catch(e){
+    alert('No se pudo acceder a la cámara: ' + e.message);
+    console.error(e);
+  }
+}
+
+/* ---------------------------
+   Drawing utilities
+   --------------------------- */
+function clearOverlay(){ ctx.clearRect(0,0,overlay.width,overlay.height); }
+function drawBox(x,y,w,h,label,color='#00d3a3'){
+  ctx.strokeStyle = color; ctx.lineWidth = Math.max(2,Math.round(overlay.width/320));
+  ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle = color; ctx.font = `${12 + Math.round(overlay.width/320*2)}px Arial`;
+  const text = label;
+  const pad = 4;
+  const tw = ctx.measureText(text).width;
+  const th = 14;
+  ctx.fillRect(x, Math.max(0,y-th-pad), tw+pad*2, th+pad);
+  ctx.fillStyle = '#00110c';
+  ctx.fillText(text, x+pad, Math.max(0,y-4));
+}
+function pointInRect(px,py,rect){ return px>=rect.x && py>=rect.y && px<=rect.x+rect.w && py<=rect.y+rect.h; }
+
+/* ---------------------------
+   Zone drawing handlers
+   --------------------------- */
+overlay.addEventListener('pointerdown', (e)=>{
+  if(!drawingZone) return;
+  const r = overlay.getBoundingClientRect();
+  const sx = e.clientX - r.left; const sy = e.clientY - r.top;
+  zoneRect = {x:sx,y:sy,w:0,h:0, startX:sx, startY:sy};
+  overlay.setPointerCapture(e.pointerId);
+});
+overlay.addEventListener('pointermove', (e)=>{
+  if(!drawingZone || !zoneRect) return;
+  const r = overlay.getBoundingClientRect();
+  const sx = e.clientX - r.left; const sy = e.clientY - r.top;
+  zoneRect.w = sx - zoneRect.startX;
+  zoneRect.h = sy - zoneRect.startY;
+  redrawOverlayTemp();
+});
+overlay.addEventListener('pointerup', (e)=>{
+  if(!drawingZone || !zoneRect) return;
+  // normalize (make positive w/h)
+  if(zoneRect.w < 0){ zoneRect.x += zoneRect.w; zoneRect.w = Math.abs(zoneRect.w); }
+  if(zoneRect.h < 0){ zoneRect.y += zoneRect.h; zoneRect.h = Math.abs(zoneRect.h); }
+  drawingZone = false;
+  btnDrawZone.textContent = 'Dibujar zona';
+  // keep zoneRect as final
+});
+btnDrawZone.addEventListener('click', ()=>{
+  drawingZone = !drawingZone;
+  btnDrawZone.textContent = drawingZone ? 'Dibujando (click y arrastra)' : 'Dibujar zona';
+});
+btnClearZone.addEventListener('click', ()=>{ zoneRect = null; clearOverlay(); });
+
+function redrawOverlayTemp(){
+  clearOverlay();
+  if(zoneRect){
+    drawBox(zoneRect.x, zoneRect.y, zoneRect.w, zoneRect.h, 'Zona', '#ff7b7b');
+  }
+}
+
+/* ---------------------------
+   FPS helper
+   --------------------------- */
+function updateFps(){
+  fpsCounter.count++;
+  const now = performance.now();
+  if(now - fpsCounter.last >= 1000){
+    fpsSpan.textContent = fpsCounter.count;
+    fpsCounter.count = 0;
+    fpsCounter.last = now;
+  }
+}
+
+/* ---------------------------
+   Face enrollment + recognition helpers
+   --------------------------- */
+async function enrollCurrentFace(name){
+  if(!name) { alert('Ingresa un nombre'); return; }
+  // capture current frame
+  const bmp = captureFrameBlob();
+  const img = await blobToImage(bmp);
+  const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+  if(!detection){ alert('No se detectó rostro claro. Intenta nuevamente (cara visible y buena luz).'); return; }
+  const desc = Array.from(detection.descriptor);
+  enrollDescriptors.push({name,descriptor:desc, thumb: bmp});
+  renderEnrollList();
+  alert('Enrolado: ' + name);
+}
+function renderEnrollList(){
+  enrollList.innerHTML = '';
+  enrollDescriptors.forEach((p,idx)=>{
+    const div = document.createElement('div'); div.className='personCard';
+    const img = document.createElement('img'); img.src = URL.createObjectURL(p.thumb);
+    const span = document.createElement('div'); span.innerHTML = `<b>${p.name}</b><div style="font-size:12px;color:var(--muted)">Descriptors</div>`;
+    const del = document.createElement('button'); del.textContent='X'; del.style.marginLeft='6px'; del.className='small';
+    del.onclick = ()=>{ enrollDescriptors.splice(idx,1); renderEnrollList(); };
+    div.appendChild(img); div.appendChild(span); div.appendChild(del);
+    enrollList.appendChild(div);
+  });
+}
+async function matchFaceDescriptor(descriptor){
+  if(enrollDescriptors.length===0) return null;
+  let best = {name:null,dist:Infinity};
+  for(const p of enrollDescriptors){
+    // euclidean
+    let d=0;
+    for(let i=0;i<descriptor.length;i++){ const diff = descriptor[i]-p.descriptor[i]; d += diff*diff; }
+    d = Math.sqrt(d);
+    if(d < best.dist){ best.dist = d; best.name = p.name; }
+  }
+  if(best.dist <= faceThreshold) return {name:best.name,dist:best.dist};
+  return null;
+}
+
+/* ---------------------------
+   Capture helpers
+   --------------------------- */
+function captureFrameBlob(){
+  const tmp = document.createElement('canvas');
+  tmp.width = videoEl.videoWidth; tmp.height = videoEl.videoHeight;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(videoEl,0,0,tmp.width,tmp.height);
+  const data = tmp.toDataURL('image/jpeg',0.8);
+  const bin = atob(data.split(',')[1]); const len = bin.length; const arr = new Uint8Array(len);
+  for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i);
+  return new Blob([arr],{type:'image/jpeg'});
+}
+function blobToImage(blob){
+  return new Promise((res,rej)=>{
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = ()=>{ URL.revokeObjectURL(url); res(img); };
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+
+/* ---------------------------
+   Save detection event (IndexedDB)
+   --------------------------- */
+async function saveDetection(obj){
+  try{
+    await saveRecord(obj);
+    refreshHistoryUI();
+  }catch(e){
+    console.error('save error',e);
+  }
+}
+
+/* ---------------------------
+   History UI
+   --------------------------- */
+async function refreshHistoryUI(){
+  const all = await getAllRecords();
+  historyList.innerHTML = '';
+  all.reverse().forEach(rec=>{
+    const d = new Date(rec.time);
+    const item = document.createElement('div'); item.className='histItem';
+    const img = document.createElement('img'); img.src = URL.createObjectURL(rec.thumb);
+    const meta = document.createElement('div'); meta.className='meta';
+    meta.innerHTML = `<b>${rec.label}</b><div style="color:var(--muted);font-size:12px">${d.toLocaleString()}</div><div style="color:var(--muted);font-size:12px">Tipo: ${rec.type || 'obj'}</div>`;
+    const btns = document.createElement('div'); btns.className='row';
+    const btnDL = document.createElement('button'); btnDL.className='small'; btnDL.textContent='Descargar';
+    btnDL.onclick = ()=>{ const a = document.createElement('a'); a.href = img.src; a.download = `${rec.label.replace(/\s+/g,'_')}_${rec.time}.jpg`; a.click(); };
+    const btnDel = document.createElement('button'); btnDel.className='small ghost'; btnDel.textContent='Borrar';
+    btnDel.onclick = async ()=>{
+      // delete record by id
+      const db = await openDB();
+      const tx = db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).delete(rec.id);
+      tx.oncomplete = ()=>refreshHistoryUI();
+    };
+    btns.appendChild(btnDL); btns.appendChild(btnDel);
+    item.appendChild(img); item.appendChild(meta); item.appendChild(btns);
+    historyList.appendChild(item);
+  });
+}
+
+/* ---------------------------
+   Main detection loop
+   --------------------------- */
+let procLoopActive = false;
+async function processLoop(){
+  if(procLoopActive) return;
+  procLoopActive = true;
+  while(true){
+    const t0 = performance.now();
+    if(model && videoEl.readyState >= 2){
+      // run detection
+      const predictions = await model.detect(videoEl);
+      clearOverlay();
+      let anyPerson = false;
+      for(const p of predictions){
+        const [x,y,w,h] = p.bbox;
+        if(cbShowBoxes.checked) drawBox(x,y,w,h, `${p.class} ${(p.score*100).toFixed(0)}%`);
+        // if zone defined and intersects -> alert
+        if(zoneRect){
+          // simple intersection check (box centers)
+          const cx = x + w/2, cy = y + h/2;
+          if(pointInRect(cx,cy,zoneRect)){
+            // zone intrusion event
+            if(alertOn && (!cbOnlyPersonAlert.checked || p.class==='person')) notifyAlert(`Intrusión zona: ${p.class}`);
+            if(cbSaveOnDetect.checked) {
+              const thumb = captureFrameBlob();
+              saveDetection({label:`Zona:${p.class}`, time:Date.now(), type:'zone', thumb});
+            }
+          }
+        }
+        // on person
+        if(p.class === 'person'){ anyPerson = true; }
+        // save detection
+        if(cbSaveOnDetect.checked){
+          const thumb = captureFrameBlob();
+          saveDetection({label:p.class, time:Date.now(), type:'obj', thumb});
+        }
+      }
+
+      // face detection + recognition (single pass)
+      try{
+        const faceOptions = new faceapi.TinyFaceDetectorOptions();
+        const detections = await faceapi.detectAllFaces(videoEl, faceOptions).withFaceLandmarks().withFaceDescriptors();
+        for(const fd of detections){
+          const box = fd.detection.box;
+          const match = await matchFaceDescriptor(fd.descriptor);
+          const label = match ? `${match.name} (${match.dist.toFixed(2)})` : 'Rostro desconocido';
+          if(cbShowBoxes.checked) drawBox(box.x, box.y, box.width, box.height, label, '#ffd166');
+          if(match && alertOn) notifyAlert(`Rostro: ${match.name}`);
+          if(!match && alertOn) {
+            // optionally alert for unknown
+          }
+          // save face capture if opted
+          if(cbSaveOnDetect.checked){
+            const thumb = captureFrameBlob();
+            saveDetection({label:label, time:Date.now(), type:'face', thumb});
+          }
+        }
+      }catch(e){
+        console.warn('face detection error', e);
+      }
+
+      // alert if person present
+      if(anyPerson && alertOn && cbOnlyPersonAlert.checked){
+        notifyAlert('Persona detectada');
+      }
+    }
+    updateFps();
+    const t1 = performance.now();
+    const elapsed = t1 - t0;
+    const wait = Math.max(80, intervalMs - elapsed);
+    await new Promise(r=>setTimeout(r, wait));
+  }
+}
+
+/* ---------------------------
+   Alerts (visual + sound)
+   --------------------------- */
+function notifyAlert(msg){
+  // visual
+  btnToggleAlerts.textContent = 'Alertas: ON • ' + msg;
+  setTimeout(()=> btnToggleAlerts.textContent = alertOn ? 'Alertas: ON' : 'Alertas: OFF', 2500);
+  // sound
+  try{ audioBeep.play().catch(()=>{}); }catch(e){}
+}
+
+/* ---------------------------
+   Misc UI wiring
+   --------------------------- */
+btnSwitch.addEventListener('click', async ()=>{
+  usingFront = !usingFront;
+  await startCamera();
+});
+btnSnapshot.addEventListener('click', async ()=>{
+  const blob = captureFrameBlob();
+  await saveDetection({label:'snapshot', time:Date.now(), type:'manual', thumb:blob});
+  alert('Foto guardada en historial');
+});
+btnEnroll.addEventListener('click', async ()=>{
+  await enrollCurrentFace(inputName.value.trim());
+  inputName.value = '';
+});
+btnToggleAlerts.addEventListener('click', ()=>{ alertOn = !alertOn; btnToggleAlerts.textContent = alertOn ? 'Alertas: ON' : 'Alertas: OFF'; });
+btnClearAll.addEventListener('click', async ()=>{ if(confirm('Borrar todo el historial local?')){ await clearAllRecords(); refreshHistoryUI(); alert('Historial borrado'); } });
+inputInterval.addEventListener('change', ()=>{ intervalMs = parseInt(inputInterval.value || '250'); intervalMsSpan.textContent = intervalMs; });
+inputFaceThresh.addEventListener('change', ()=>{ faceThreshold = parseFloat(inputFaceThresh.value || '0.55'); });
+cbShowBoxes.addEventListener('change', ()=>{ /* box show toggled in loop */});
+
+/* ---------------------------
+   Init
+   --------------------------- */
+(async ()=>{
+  intervalMsSpan.textContent = intervalMs;
+  await loadModels();
+  await startCamera();
+  await refreshHistoryUI();
+  renderEnrollList();
+  processLoop();
+})();
+  </script>
+</body>
+</html>
